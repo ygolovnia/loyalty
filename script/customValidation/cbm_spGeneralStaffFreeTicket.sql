@@ -1,5 +1,5 @@
-USE [VISTALOYALTY]
-GO
+--USE [VISTALOYALTY]
+--GO
 
 /****** Object:  StoredProcedure [dbo].[cognetic_custom_GeneralStaff_FreeTicket_v4]    Script Date: 16.06.2016 17:03:53 ******/
 
@@ -8,9 +8,9 @@ GO
 
 **/
 
-IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spGeneralStaffFreeTicket_v4') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
+IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spGeneralStaffFreeTicket_v5') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
 BEGIN
-	DROP PROCEDURE dbo.cbm_spGeneralStaffFreeTicket_v4
+	DROP PROCEDURE dbo.cbm_spGeneralStaffFreeTicket_v5
 END
 GO
 
@@ -20,7 +20,7 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 
-CREATE PROCEDURE [dbo].[cbm_spGeneralStaffFreeTicket_v4]
+CREATE PROCEDURE [dbo].[cbm_spGeneralStaffFreeTicket_v5]
 (
 	@member_id nvarchar(100),
 	@recognition_id integer,
@@ -57,20 +57,40 @@ BEGIN
 	SET @strResponse = ''
 	SET @Result = 1
 
-	--- check availability of recognition
+	--Make sure the member is qualified to take this recognition
+	IF NOT EXISTS (	SELECT 1 FROM cognetic_members_membershipRecognition
+					WHERE membershipRecognition_recognitionid = @recognition_id
+						AND membershipRecognition_membershipid = @member_id
+						AND membershipRecognition_status = 'Qualified'
+						AND membershipRecognition_isDisqualified = 0)
+	BEGIN
+		SET @Result = 0
+		SET @strResponse = dbo.translate(@language, 'Member not qualified to take this recognition.')
+		GOTO RETURNLABEL
+	END
+
 	DECLARE @totalAvailableRecognitions INT = 0
-	SELECT @totalAvailableRecognitions = ISNULL(SUM(r.membershipRecognition_totalEarned - r.membershipRecognition_numberOfRedemptions),0)
-	FROM cognetic_members_membershipRecognition r
-	WHERE r.membershipRecognition_recognitionid = @recognition_id
-		AND r.membershipRecognition_membershipid = @member_id
-		AND r.membershipRecognition_status='Qualified'
-		AND GETDATE() between r.membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,r.membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
+	SELECT @totalAvailableRecognitions = SUM(membershipRecognition_totalEarned - membershipRecognition_numberOfRedemptions)
+	FROM cognetic_members_membershipRecognition
+	WHERE membershipRecognition_recognitionid = @recognition_id
+		AND membershipRecognition_membershipid = @member_id
+		AND GETDATE() between membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
 	--Make sure the quantity available is greater than the quantity redeemed
 	IF @totalAvailableRecognitions <= 0
 	BEGIN
 		SET @Result = 0
 		SET @strResponse = dbo.translate(@language, 'All of the recognitions allowed have been redeemed.')
+		GOTO RETURNLABEL
 	END
+
+	-- Ensure the request won't exceed the number of available recognitions
+	IF @totalAvailableRecognitions - @quantity_requested < 0
+	BEGIN
+		SET @Result = 0
+		SET @strResponse = dbo.translate(@language, 'The number of recognitions requested exceeds the number available for redemption.')
+		GOTO RETURNLABEL
+	END
+
 	ELSE
 	BEGIN
 
@@ -203,6 +223,8 @@ BEGIN
 		END
 	END
 --OUTPUT----------------------------------------------
+	
+	RETURNLABEL:
 	IF @Result= 0
 	BEGIN
 		--- SET @strResponse = dbo.translate(@language, @strResponse)
@@ -215,7 +237,7 @@ END
 
 GO
 
-GRANT  EXECUTE  ON [dbo].[cbm_spGeneralStaffFreeTicket_v4]   TO PUBLIC
+GRANT  EXECUTE  ON [dbo].[cbm_spGeneralStaffFreeTicket_v5]   TO PUBLIC
 
 
 GO
