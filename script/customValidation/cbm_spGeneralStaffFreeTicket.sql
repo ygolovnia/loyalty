@@ -1,16 +1,13 @@
---USE [VISTALOYALTY]
---GO
-
-/****** Object:  StoredProcedure [dbo].[cognetic_custom_GeneralStaff_FreeTicket_v7]    Script Date: 16.06.2016 17:03:53 ******/
+/****** Object:  StoredProcedure [dbo].[cognetic_custom_GeneralStaff_FreeTicket]    Script Date: 16.06.2016 17:03:53 ******/
 
 /***
 	03.10.2016 - Add check of recognition q-ty 
 
 **/
 
-IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spGeneralStaffFreeTicket_v7') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
+IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spGeneralStaffFreeTicket') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
 BEGIN
-	DROP PROCEDURE dbo.cbm_spGeneralStaffFreeTicket_v7
+	DROP PROCEDURE dbo.cbm_spGeneralStaffFreeTicket
 END
 GO
 
@@ -20,7 +17,7 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 
-CREATE PROCEDURE [dbo].[cbm_spGeneralStaffFreeTicket_v7]
+CREATE PROCEDURE [dbo].[cbm_spGeneralStaffFreeTicket]
 (
 	@member_id nvarchar(100),
 	@recognition_id integer,
@@ -62,6 +59,7 @@ BEGIN
 					WHERE membershipRecognition_recognitionid = @recognition_id
 						AND membershipRecognition_membershipid = @member_id
 						AND membershipRecognition_status = 'Qualified'
+						-- TODO: recognition must be expired in time, next row must be rewrited
 						AND @formatsession_time between membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
 						AND membershipRecognition_isDisqualified = 0)
 	BEGIN
@@ -71,13 +69,16 @@ BEGIN
 	END
 
 	DECLARE @totalAvailableRecognitions INT = 0
+
 	SELECT @totalAvailableRecognitions = SUM(membershipRecognition_totalEarned - membershipRecognition_numberOfRedemptions)
 	FROM cognetic_members_membershipRecognition
 	WHERE membershipRecognition_recognitionid = @recognition_id
 		AND membershipRecognition_membershipid = @member_id
 		AND membershipRecognition_status = 'Qualified'
+		-- TODO: recognition must be expired in time, next row must be rewrited
 		AND @formatsession_time between membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
-	--Make sure the quantity available is greater than the quantity redeemed
+
+	--Make sure the recognition is available
 	IF @totalAvailableRecognitions <= 0
 	BEGIN
 		SET @Result = 0
@@ -93,137 +94,128 @@ BEGIN
 		GOTO RETURNLABEL
 	END
 
-	ELSE
+	--- get limits
+	select 
+			@intNewReleaseDurationDays=COALESCE(c.Film_intNewReleaseDurationDays,0),
+			@strDate=convert(nvarchar(10),c.dNoFreeTixDate,120),
+			@strLocalDate=convert(nvarchar(10),c.dNoFreeTixDate,104),
+			@dayLimit=ISNULL(c.DayAdmit,0), 
+			@sessionLimit=ISNULL(c.SessionAdmit,0), 
+			@maxAdmitDay=ISNULL(c.MaxAdmitDay,0) 
+	from cbm_tblFilm c
+		JOIN cognetic_rules_movie m on c.Film_strHOFilmCode=m.movie_code 
+	where 
+		c.Film_strStatus='A' 
+		AND m.movie_id=@movie_id
+
+	-- Check 'No Free Tickets Until'
+	IF NOT EXISTS (
+	SELECT m.movie_id 
+	FROM cbm_tblFilm c
+		JOIN cognetic_rules_movie m ON m.movie_code=c.Film_strHOFilmCode
+	WHERE 
+		c.Film_strStatus='A' 
+		AND m.movie_id=@movie_id
+		AND c.dNoFreeTixDate <= @formatsession_time
+	)	
 	BEGIN
+		SET @Result = 0
+		SET @strResponse = dbo.translate(@language, 'Free tickets for this film are disable till') + ' ' + @strLocalDate
+		GOTO RETURNLABEL
+	END
 
-		--- get limits
-		select 
-				@intNewReleaseDurationDays=COALESCE(c.Film_intNewReleaseDurationDays,0),
-				@strDate=convert(nvarchar(10),c.dNoFreeTixDate,120),
-				@strLocalDate=convert(nvarchar(10),c.dNoFreeTixDate,104),
-				@dayLimit=ISNULL(c.DayAdmit,0), 
-				@sessionLimit=ISNULL(c.SessionAdmit,0), 
-				@maxAdmitDay=ISNULL(c.MaxAdmitDay,0) 
-		from cbm_tblFilm c
-			JOIN cognetic_rules_movie m on c.Film_strHOFilmCode=m.movie_code 
-		where 
-			c.Film_strStatus='A' 
-			AND m.movie_id=@movie_id
+	-- Check 'New Release Duration (days)'
+	IF @intNewReleaseDurationDays = 0
+	BEGIN
+		SET @Result = 0
+		SET @strResponse = dbo.translate(@language, 'Error: New Release Duration not define for this film')
+		GOTO RETURNLABEL
+	END
 
-		-- Check 'No Free Tickets Until'
-		IF NOT EXISTS (
+	IF NOT EXISTS (
 		SELECT m.movie_id 
 		FROM cbm_tblFilm c
 			JOIN cognetic_rules_movie m ON m.movie_code=c.Film_strHOFilmCode
 		WHERE 
 			c.Film_strStatus='A' 
+			AND DATEADD(day, @intNewReleaseDurationDays, c.Film_dtmOpeningDate) <= @formatsession_time
 			AND m.movie_id=@movie_id
-			AND c.dNoFreeTixDate <= @formatsession_time
-		)	
+	)
+	BEGIN
+		SET @Result = 0
+		SET @strResponse = dbo.translate(@language,'Free tickets are disable during new release period')
+		GOTO RETURNLABEL
+	END
+
+	SELECT @strDate = convert(nvarchar(10),@formatsession_time,120)
+
+	IF (@dayLimit+@sessionLimit) = 0
+	BEGIN
+		SET @Result = 0
+		SET @strResponse = dbo.translate(@language,'Restriction isnt set for this movie. Free tickets are disable')
+		GOTO RETURNLABEL
+	END
+
+	--- take into account rest from prev day
+	SELECT @restAdmit=admit FROM cbm_tblPrevDayRest
+	WHERE cinemaId=@cinema_id AND filmId=@movie_id AND hireDate=@strDate
+
+	--- take into account max admit per day
+	IF @restAdmit >0
+	BEGIN 
+		IF @dayLimit + @restAdmit >  @maxAdmitDay
 		BEGIN
-			SET @Result = 0
-			SET @strResponse = dbo.translate(@language, 'Free tickets for this film are disable till') + ' ' + @strLocalDate
+			SET @dayLimit = @maxAdmitDay
 		END
 		ELSE
-		BEGIN
-			-- Check 'New Release Duration (days)'
+			SET @dayLimit = @dayLimit + @restAdmit
+	END
 
-			IF @intNewReleaseDurationDays = 0
-			BEGIN
-				SET @Result = 0
-				SET @strResponse = dbo.translate(@language, 'Error: New Release Duration not define for this film')
-			END
-			ELSE
-			BEGIN
-				IF NOT EXISTS (
-					SELECT m.movie_id 
-					FROM cbm_tblFilm c
-						JOIN cognetic_rules_movie m ON m.movie_code=c.Film_strHOFilmCode
-					WHERE 
-						c.Film_strStatus='A' 
-						AND DATEADD(day, @intNewReleaseDurationDays, c.Film_dtmOpeningDate) <= @formatsession_time
-						AND m.movie_id=@movie_id
-				)
-				BEGIN
-					SET @Result = 0
-					SET @strResponse = dbo.translate(@language,'Free tickets are disable during new release period')
-				END
-				ELSE
-				BEGIN
-					SELECT @strDate = convert(nvarchar(10),@formatsession_time,120)
-
-					IF (@dayLimit+@sessionLimit) = 0
-					BEGIN
-						SET @Result = 0
-						SET @strResponse = dbo.translate(@language,'Restriction isnt set for this movie. Free tickets are disable')
-					END
-					ELSE
-					BEGIN
-						--- take into account rest from prev day
-
-						SELECT @restAdmit=admit FROM cbm_tblPrevDayRest
-						WHERE cinemaId=@cinema_id AND filmId=@movie_id AND hireDate=@strDate
-
-						--- take into account max admit per day
-						IF @restAdmit >0
-						BEGIN 
-							IF @dayLimit + @restAdmit >  @maxAdmitDay
-							BEGIN
-								SET @dayLimit = @maxAdmitDay
-							END
-							ELSE
-								SET @dayLimit = @dayLimit + @restAdmit
-						END
-
-						EXEC	@dayFact = cbm_spFreeTicketIssuedQtyPerDay
-								@movie_id,
-								@strDate,
-								@cinema_id
+	EXEC	@dayFact = cbm_spFreeTicketIssuedQtyPerDay
+			@movie_id,
+			@strDate,
+			@cinema_id
 			
 
-						EXEC	@orderDayFact = cbm_spFreeTicketOrderingQtyPerDay
-								@movie_id,
-								@strDate,
-								@cinema_id
+	EXEC	@orderDayFact = cbm_spFreeTicketOrderingQtyPerDay
+			@movie_id,
+			@strDate,
+			@cinema_id
 				
 
-						IF  (@dayLimit > 0) AND (@dayFact + @orderDayFact + @quantity_requested > @dayLimit)
-						BEGIN
-							SET @Result = 0
-							SET @strResponse  = dbo.translate(@language, 'No more free tickets available for this day')+':'+
-								dbo.translate(@language, 'Soled') + '-'+cast(@dayFact as nvarchar)+'|'+
-								dbo.translate(@language, 'Ordered') + '-'+cast(@orderDayFact as nvarchar)+'|'+
-								dbo.translate(@language, 'Your ordered') + '-'+cast(@quantity_requested as nvarchar)+'|'+
-								dbo.translate(@language, 'Restriction') + '-'+cast(@dayLimit as nvarchar)
-						END
-						ELSE
-						BEGIN
-							EXEC	@sessionFact = cbm_spFreeTicketIssuedQtyPerSession
-									@film = @movie_id,
-									@sessiontime = @formatsession_time,
-									@cinema = @cinema_id
+	IF  (@dayLimit > 0) AND (@dayFact + @orderDayFact + @quantity_requested > @dayLimit)
+	BEGIN
+		SET @Result = 0
+		SET @strResponse  = dbo.translate(@language, 'No more free tickets available for this day')+':'+
+			dbo.translate(@language, 'Soled') + '-'+cast(@dayFact as nvarchar)+'|'+
+			dbo.translate(@language, 'Ordered') + '-'+cast(@orderDayFact as nvarchar)+'|'+
+			dbo.translate(@language, 'Your ordered') + '-'+cast(@quantity_requested as nvarchar)+'|'+
+			dbo.translate(@language, 'Restriction') + '-'+cast(@dayLimit as nvarchar)
+			GOTO RETURNLABEL
+	END
+
+	EXEC	@sessionFact = cbm_spFreeTicketIssuedQtyPerSession
+			@film = @movie_id,
+			@sessiontime = @formatsession_time,
+			@cinema = @cinema_id
 					
 		
-							EXEC	@orderSessionFact = cbm_spFreeTicketOrderingQtyPerSession
-									@film = @movie_id,
-									@sessiontime = @formatsession_time,
-									@cinema = @cinema_id
+	EXEC	@orderSessionFact = cbm_spFreeTicketOrderingQtyPerSession
+			@film = @movie_id,
+			@sessiontime = @formatsession_time,
+			@cinema = @cinema_id
 					
-							IF (@sessionLimit>0) AND (@sessionFact + @orderSessionFact + @quantity_requested > @sessionLimit)
-							BEGIN
-								SET @Result = 0
-								SET @strResponse = dbo.translate(@language,'No more free tickets available for this session')+':'+
-									dbo.translate(@language, 'Soled') + '-'+cast(@sessionFact as nvarchar)+'|'+
-									dbo.translate(@language, 'Ordered') + '-'+cast(@orderSessionFact as nvarchar)+'|'+
-									dbo.translate(@language, 'Your ordered') + '-'+cast(@quantity_requested as nvarchar)+'|'+
-									dbo.translate(@language, 'Restriction') + '-'+cast(@sessionLimit as nvarchar)
-							END
-						END
-					END
-				END
-			END
-		END
+	IF (@sessionLimit>0) AND (@sessionFact + @orderSessionFact + @quantity_requested > @sessionLimit)
+	BEGIN
+		SET @Result = 0
+		SET @strResponse = dbo.translate(@language,'No more free tickets available for this session')+':'+
+			dbo.translate(@language, 'Soled') + '-'+cast(@sessionFact as nvarchar)+'|'+
+			dbo.translate(@language, 'Ordered') + '-'+cast(@orderSessionFact as nvarchar)+'|'+
+			dbo.translate(@language, 'Your ordered') + '-'+cast(@quantity_requested as nvarchar)+'|'+
+			dbo.translate(@language, 'Restriction') + '-'+cast(@sessionLimit as nvarchar)
+			GOTO RETURNLABEL
 	END
+
 --OUTPUT----------------------------------------------
 	
 	RETURNLABEL:
@@ -239,8 +231,5 @@ END
 
 GO
 
-GRANT  EXECUTE  ON [dbo].[cbm_spGeneralStaffFreeTicket_v7]   TO PUBLIC
-
-
+GRANT  EXECUTE  ON [dbo].[cbm_spGeneralStaffFreeTicket]   TO PUBLIC
 GO
-
