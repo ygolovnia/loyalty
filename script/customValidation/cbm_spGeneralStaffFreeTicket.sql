@@ -8,9 +8,9 @@
 
 **/
 
-IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spGeneralStaffFreeTicket_v5') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
+IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spGeneralStaffFreeTicket_v6') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
 BEGIN
-	DROP PROCEDURE dbo.cbm_spGeneralStaffFreeTicket_v5
+	DROP PROCEDURE dbo.cbm_spGeneralStaffFreeTicket_v6
 END
 GO
 
@@ -20,7 +20,7 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 
-CREATE PROCEDURE [dbo].[cbm_spGeneralStaffFreeTicket_v5]
+CREATE PROCEDURE [dbo].[cbm_spGeneralStaffFreeTicket_v6]
 (
 	@member_id nvarchar(100),
 	@recognition_id integer,
@@ -62,6 +62,7 @@ BEGIN
 					WHERE membershipRecognition_recognitionid = @recognition_id
 						AND membershipRecognition_membershipid = @member_id
 						AND membershipRecognition_status = 'Qualified'
+						AND GETDATE() between membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
 						AND membershipRecognition_isDisqualified = 0)
 	BEGIN
 		SET @Result = 0
@@ -74,6 +75,7 @@ BEGIN
 	FROM cognetic_members_membershipRecognition
 	WHERE membershipRecognition_recognitionid = @recognition_id
 		AND membershipRecognition_membershipid = @member_id
+		AND membershipRecognition_status = 'Qualified'
 		AND GETDATE() between membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
 	--Make sure the quantity available is greater than the quantity redeemed
 	IF @totalAvailableRecognitions <= 0
@@ -237,7 +239,7 @@ END
 
 GO
 
-GRANT  EXECUTE  ON [dbo].[cbm_spGeneralStaffFreeTicket_v5]   TO PUBLIC
+GRANT  EXECUTE  ON [dbo].[cbm_spGeneralStaffFreeTicket_v6]   TO PUBLIC
 
 
 GO
