@@ -1,16 +1,16 @@
 --USE [VISTALOYALTY]
 --GO
 
-/****** Object:  StoredProcedure [dbo].[cognetic_custom_GeneralStaff_FreeTicket_v4]    Script Date: 16.06.2016 17:03:53 ******/
+/****** Object:  StoredProcedure [dbo].[cognetic_custom_GeneralStaff_FreeTicket_v7]    Script Date: 16.06.2016 17:03:53 ******/
 
 /***
 	03.10.2016 - Add check of recognition q-ty 
 
 **/
 
-IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spGeneralStaffFreeTicket_v6') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
+IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spGeneralStaffFreeTicket_v7') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
 BEGIN
-	DROP PROCEDURE dbo.cbm_spGeneralStaffFreeTicket_v6
+	DROP PROCEDURE dbo.cbm_spGeneralStaffFreeTicket_v7
 END
 GO
 
@@ -20,7 +20,7 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 
-CREATE PROCEDURE [dbo].[cbm_spGeneralStaffFreeTicket_v6]
+CREATE PROCEDURE [dbo].[cbm_spGeneralStaffFreeTicket_v7]
 (
 	@member_id nvarchar(100),
 	@recognition_id integer,
@@ -62,7 +62,7 @@ BEGIN
 					WHERE membershipRecognition_recognitionid = @recognition_id
 						AND membershipRecognition_membershipid = @member_id
 						AND membershipRecognition_status = 'Qualified'
-						AND GETDATE() between membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
+						AND @formatsession_time between membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
 						AND membershipRecognition_isDisqualified = 0)
 	BEGIN
 		SET @Result = 0
@@ -76,7 +76,7 @@ BEGIN
 	WHERE membershipRecognition_recognitionid = @recognition_id
 		AND membershipRecognition_membershipid = @member_id
 		AND membershipRecognition_status = 'Qualified'
-		AND GETDATE() between membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
+		AND @formatsession_time between membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
 	--Make sure the quantity available is greater than the quantity redeemed
 	IF @totalAvailableRecognitions <= 0
 	BEGIN
@@ -118,7 +118,7 @@ BEGIN
 		WHERE 
 			c.Film_strStatus='A' 
 			AND m.movie_id=@movie_id
-			AND c.dNoFreeTixDate <= getdate()
+			AND c.dNoFreeTixDate <= @formatsession_time
 		)	
 		BEGIN
 			SET @Result = 0
@@ -141,7 +141,7 @@ BEGIN
 						JOIN cognetic_rules_movie m ON m.movie_code=c.Film_strHOFilmCode
 					WHERE 
 						c.Film_strStatus='A' 
-						AND DATEADD(day, @intNewReleaseDurationDays, c.Film_dtmOpeningDate) <= getdate()
+						AND DATEADD(day, @intNewReleaseDurationDays, c.Film_dtmOpeningDate) <= @formatsession_time
 						AND m.movie_id=@movie_id
 				)
 				BEGIN
@@ -239,7 +239,7 @@ END
 
 GO
 
-GRANT  EXECUTE  ON [dbo].[cbm_spGeneralStaffFreeTicket_v6]   TO PUBLIC
+GRANT  EXECUTE  ON [dbo].[cbm_spGeneralStaffFreeTicket_v7]   TO PUBLIC
 
 
 GO
