@@ -1,11 +1,3 @@
-/**
-* updated 01.07.2016
-*/
-
-
-USE [VISTALOYALTY]
-GO
-
 IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spFreeTicketIssuedQtyPerSession') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
 BEGIN
 	DROP PROCEDURE dbo.cbm_spFreeTicketIssuedQtyPerSession
@@ -15,7 +7,8 @@ GO
 CREATE PROCEDURE [dbo].[cbm_spFreeTicketIssuedQtyPerSession](
 @film			int,
 @sessiontime	datetime,
-@cinema			int
+@cinema			int,
+@freeTicketsIdentifierList nvarchar(1000)
 )
 
 AS
@@ -25,19 +18,9 @@ BEGIN
 	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
 
 	DECLARE @qty int,
-			--- @itemId int = 1013 ---675 LAB
+			@sql nvarchar(1000)
 
-			@itemList nvarchar(50) = '1013|1018'
-	
-	/*DECLARE @list TABLE
-	(
-		itemId	NVARCHAR(10)
-	)
-	INSERT INTO @list
-	EXEC dbo.SplitString	@StringInput	= @itemList,
-							@Delimiter		= '|',
-							@RemoveEmpty	= 1			
-							*/
+	SET @sql = N'
 	select 
 		@qty = COALESCE(sum(cast(r.transactionRecognition_numberOfRedemptions as int)),0)
 	from 
@@ -62,17 +45,18 @@ BEGIN
 						and t.transaction_isValidateRecognition is NULL --- =1 for validate step
 						and t.transaction_complexid=@cinema
 						and i.transactionItem_movieid=@film
-						and i.transactionItem_itemid IN(1013,1018)
+						and i.transactionItem_itemid IN('+ @freeTicketsIdentifierList +')
 						and i.transactionItem_sessionTime = @sessiontime
 						group by t.transaction_POStransactionid
 				)
-		)
+		)'
+
+	exec sp_executesql @sql, N'@cinema int, @film int, @sessiontime DATETIME, @qty int output', @cinema, @film, @sessiontime, @qty output
+
 
 	return @qty
 END
-
 GO
 
 GRANT  EXECUTE  ON [dbo].[cbm_spFreeTicketIssuedQtyPerSession]   TO PUBLIC
-
 GO

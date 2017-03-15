@@ -1,5 +1,3 @@
-/****** Object:  StoredProcedure [dbo].[cbm_spHOStaffFreeTicket]    Script Date: 02.07.2016 17:03:53 ******/
-
 IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spHOStaffFreeTicket') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
 BEGIN
 	DROP PROCEDURE dbo.cbm_spHOStaffFreeTicket
@@ -124,15 +122,30 @@ BEGIN
 			SET @dayLimit = @dayLimit + @restAdmit
 	END
 
+	/* get identifiers from setting */
+	DECLARE @freeTicketsIdentifierList	NVARCHAR(1000),
+			@freeTicketsRecognitionIdentifierList	NVARCHAR(1000)
+	
+	SELECT @freeTicketsIdentifierList=setting_value
+	FROM cognetic_setup_setting
+	WHERE setting_name = 'FreeTicketsIdentifierList'
+
+	SELECT @freeTicketsRecognitionIdentifierList=setting_value
+	FROM cognetic_setup_setting
+	WHERE setting_name = 'FreeTicketsRecognitionIdentifierList'
+
 	EXEC	@dayFact = cbm_spFreeTicketIssuedQtyPerDay
 			@movie_id,
 			@strDate,
-			@cinema_id
+			@cinema_id,
+			@freeTicketsIdentifierList
+
 			
 	EXEC	@orderDayFact = cbm_spFreeTicketOrderingQtyPerDay
 			@movie_id,
 			@strDate,
-			@cinema_id
+			@cinema_id,
+			@freeTicketsRecognitionIdentifierList
 				
 	IF  (@dayLimit > 0) AND (@dayFact + @orderDayFact + @quantity_requested > @dayLimit)
 	BEGIN
@@ -148,13 +161,15 @@ BEGIN
 	EXEC	@sessionFact = cbm_spFreeTicketIssuedQtyPerSession
 			@film = @movie_id,
 			@sessiontime = @formatsession_time,
-			@cinema = @cinema_id
+			@cinema = @cinema_id,
+			@freeTicketsIdentifierList = @freeTicketsIdentifierList
 					
 		
 	EXEC	@orderSessionFact = cbm_spFreeTicketOrderingQtyPerSession
 			@film = @movie_id,
 			@sessiontime = @formatsession_time,
-			@cinema = @cinema_id
+			@cinema = @cinema_id,
+			@freeTicketsRecognitionIdentifierList = @freeTicketsRecognitionIdentifierList
 					
 	IF (@sessionLimit>0) AND (@sessionFact + @orderSessionFact + @quantity_requested > @sessionLimit)
 	BEGIN

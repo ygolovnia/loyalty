@@ -1,11 +1,3 @@
-/**
-* updated 01.07.2016
-*/
-
-
-USE [VISTALOYALTY]
-GO
-
 IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spFreeTicketOrderingQtyPerSession') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
 BEGIN
 	DROP PROCEDURE dbo.cbm_spFreeTicketOrderingQtyPerSession
@@ -15,7 +7,8 @@ GO
 CREATE PROCEDURE [dbo].[cbm_spFreeTicketOrderingQtyPerSession](
 @film			int,
 @sessiontime	datetime,
-@cinema			int
+@cinema			int,
+@freeTicketsRecognitionIdentifierList	nvarchar(1000)
 )
 
 AS
@@ -24,25 +17,15 @@ BEGIN
 	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
 
 	DECLARE @qty int,
-			@recogList nvarchar(50) = '1|2' --- 22 LAB
+			@sql nvarchar(1000)
 
-	/*DECLARE @list TABLE
-	(
-		recogId	NVARCHAR(10)
-	)
-	INSERT INTO @list
-	EXEC dbo.SplitString	@StringInput	= @recogList,
-							@Delimiter		= '|',
-							@RemoveEmpty	= 1
-	
-	*/
+	SET @sql = N'
 	select @qty=COALESCE(sum(cast(r.transactionRecognition_numberOfRedemptions as int)),0)
 	from cognetic_data_transaction t 
 	join cognetic_data_transactionRecognition r on t.transaction_id=r.transactionRecognition_transactionid
 	where 
 	r.transactionRecognition_movieid=@film
----	and r.transactionRecognition_recogid IN (SELECT recogId FROM @list)                  ----=@recogId ----!!!!!!
-	and r.transactionRecognition_recogid IN (1,2)                  ----=@recogId ----!!!!!!
+	and r.transactionRecognition_recogid IN (' + @freeTicketsRecognitionIdentifierList + ')
 	and r.transactionRecognition_sessionTime=@sessiontime
 	and t.transaction_complexid=@cinema
 	and t.transaction_workstationID is NULL
@@ -54,13 +37,13 @@ BEGIN
 	where 
 	t.transaction_workstationID is NOT NULL
 	and t.transaction_cinemaOperator is NOT NULL
-	and t.transaction_isValidateRecognition is NULL )
+	and t.transaction_isValidateRecognition is NULL )'
+
+	exec sp_executesql @sql, N'@cinema int, @film int, @sessiontime DATETIME, @qty int output', @cinema, @film, @sessiontime, @qty output
 
 	return @qty
 END
-
 GO
 
 GRANT  EXECUTE  ON [dbo].[cbm_spFreeTicketOrderingQtyPerSession]   TO PUBLIC
-
 GO

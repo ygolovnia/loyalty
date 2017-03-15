@@ -1,10 +1,3 @@
-/**
-* updated 01.07.2016
-*/
-
-USE [VISTALOYALTY]
-GO
-
 IF EXISTS (SELECT 1 FROM sysobjects where id = object_id(N'dbo.cbm_spFreeTicketOrderingQtyPerDay') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
 BEGIN
 	DROP PROCEDURE dbo.cbm_spFreeTicketOrderingQtyPerDay
@@ -14,7 +7,8 @@ GO
 CREATE PROCEDURE [dbo].[cbm_spFreeTicketOrderingQtyPerDay](
 @film		int,
 @date		nvarchar(10),
-@cinema		int
+@cinema		int,
+@freeTicketsRecognitionIdentifierList	nvarchar(1000)
 )
 
 AS
@@ -23,43 +17,34 @@ BEGIN
 	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
 
 	DECLARE @qty int = NULL,
-----			@recogId int = 1 --- 22 LAB
-			@recogList nvarchar(50) = '1|2' --- 22 LAB
+			@sql nvarchar(1000)
 
-	/*DECLARE @list TABLE
-	(
-		recogId	NVARCHAR(10)
-	)
-	INSERT INTO @list
-	EXEC dbo.SplitString	@StringInput	= @recogList,
-							@Delimiter		= '|',
-							@RemoveEmpty	= 1
-							*/
-	select @qty=COALESCE(sum(cast(r.transactionRecognition_numberOfRedemptions as int)),0)
-	from cognetic_data_transaction t 
-	join cognetic_data_transactionRecognition r on t.transaction_id=r.transactionRecognition_transactionid
-	where 
-	r.transactionRecognition_movieid=@film
----	and r.transactionRecognition_recogid IN (SELECT recogId FROM @list) ------------=@recogId ----!!!!!!
-	and r.transactionRecognition_recogid IN (1,2) ------------=@recogId ----!!!!!!
-	and convert(nvarchar(10),r.transactionRecognition_sessionTime,120)=@date
-	and t.transaction_complexid=@cinema
-	and t.transaction_workstationID is NULL
-	and t.transaction_cinemaOperator is NULL
-	and t.transaction_isValidateRecognition=1
-	and  t.transaction_POStransactionId not in 
-	(select t.transaction_POStransactionId 
-	from cognetic_data_transaction t 
-	where 
-	t.transaction_workstationID is NOT NULL
-	and t.transaction_cinemaOperator is NOT NULL
-	and t.transaction_isValidateRecognition is NULL )
+	SET @sql = N'
+		SELECT
+		  @qty = COALESCE(SUM(CAST(r.transactionRecognition_numberOfRedemptions AS int)), 0)
+		FROM cognetic_data_transaction t
+		JOIN cognetic_data_transactionRecognition r
+		  ON t.transaction_id = r.transactionRecognition_transactionid
+		WHERE r.transactionRecognition_movieid = @film
+		AND r.transactionRecognition_recogid IN (' + @freeTicketsRecognitionIdentifierList + ')
+		AND CONVERT(nvarchar(10), r.transactionRecognition_sessionTime, 120) = @date
+		AND t.transaction_complexid = @cinema
+		AND t.transaction_workstationID IS NULL
+		AND t.transaction_cinemaOperator IS NULL
+		AND t.transaction_isValidateRecognition = 1
+		AND t.transaction_POStransactionId NOT IN (
+			SELECT
+			  t.transaction_POStransactionId
+			FROM cognetic_data_transaction t
+			WHERE t.transaction_workstationID IS NOT NULL
+			AND t.transaction_cinemaOperator IS NOT NULL
+			AND t.transaction_isValidateRecognition IS NULL)'
+
+	exec sp_executesql @sql, N'@cinema int, @film int, @date nvarchar(10), @qty int output', @cinema, @film, @date, @qty output
 
 	return @qty
 END
-
 GO
 
 GRANT  EXECUTE  ON [dbo].[cbm_spFreeTicketOrderingQtyPerDay]   TO PUBLIC
-
 GO
