@@ -51,8 +51,8 @@ BEGIN
 					WHERE membershipRecognition_recognitionid = @recognition_id
 						AND membershipRecognition_membershipid = @member_id
 						AND membershipRecognition_status = 'Qualified'
-						-- TODO: recognition must be expired in time, next row must be rewrited
-						AND @formatsession_time between membershipRecognition_nextQualifyingDate AND DATEADD(DAY,1,membershipRecognition_expiryDate) ---r.membershipRecognition_expiryDate
+						-- doesn't allow next month session booking. #824 -  this feature disabled from 09-2017
+						-- AND @formatsession_time between membershipRecognition_nextQualifyingDate AND r.membershipRecognition_expiryDate
 						AND membershipRecognition_isDisqualified = 0)
 	BEGIN
 		SET @Result = 0
